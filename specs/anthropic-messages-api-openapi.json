@@ -1,0 +1,160 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Anthropic Messages API",
+    "description": "Deliberately minimal. Describes ONE operation, POST /v1/messages, because Command chat is the only consumer and Coherence should expose no more of Anthropic's surface than that.\n\nTwo constraints this spec exists to satisfy, neither of them cosmetic:\n\n1. The tool name is load-bearing. Coherence derives tool names as `<api-name>_<operationId>`, and command/src/providers/coherence-anthropic.ts hardcodes the string `anthropic-messages-api_create_message`. So the API must be registered as `anthropic-messages-api` and the operationId below must stay `create_message`. Nothing validates this at registration time; it fails at the first call.\n\n2. Scope is a commercial boundary, not tidiness. Anthropic's Commercial Terms section D.4 prohibits reselling the Services. Powering Command with the model is permitted under A.1; exposing raw model access as a Coherence capability is the thing that would cross the line. Registering exactly one operation makes that structural rather than a matter of intent.\n\nSee SYN-2311.",
+    "version": "2023-06-01"
+  },
+  "servers": [
+    {
+      "url": "https://api.anthropic.com",
+      "description": "Anthropic API. The credential is supplied by Coherence from the secret named in the registration, never by the caller."
+    }
+  ],
+  "security": [
+    {
+      "apiKeyAuth": []
+    }
+  ],
+  "paths": {
+    "/v1/messages": {
+      "post": {
+        "operationId": "create_message",
+        "summary": "Send a conversation to Claude and get a reply",
+        "description": "Creates a model response for a conversation. Command calls this for every chat turn.\n\nThe caller supplies the conversation and the model id. The API key is injected by Coherence at egress and is never visible to the caller.",
+        "tags": ["messages"],
+        "parameters": [
+          {
+            "name": "anthropic-version",
+            "in": "header",
+            "required": true,
+            "description": "Anthropic API contract version. This is NOT the model version: the model is chosen per request in the body, so pinning this does not hold us on an older model. Pinning is the point, it is what stops Anthropic's breaking changes arriving unannounced. There is deliberately no 'latest' value.",
+            "schema": {
+              "type": "string",
+              "default": "2023-06-01",
+              "enum": ["2023-06-01"]
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateMessageRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "A model reply.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          },
+          "400": { "description": "Invalid request." },
+          "401": { "description": "Authentication failed. The configured API key is missing, wrong, or revoked." },
+          "429": { "description": "Rate limited. Limits are per Anthropic organisation, so they are shared across every caller using this credential." },
+          "500": { "description": "Anthropic server error." },
+          "529": { "description": "Anthropic overloaded. Retry with backoff." }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "apiKeyAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "x-api-key",
+        "description": "Anthropic authenticates with an x-api-key header, NOT an Authorization bearer. Coherence supplies the value from the registration's secret_name, resolved as an environment variable on the gateway."
+      }
+    },
+    "schemas": {
+      "CreateMessageRequest": {
+        "type": "object",
+        "required": ["model", "max_tokens", "messages"],
+        "properties": {
+          "model": {
+            "type": "string",
+            "description": "Model id, for example claude-sonnet-4-6. Chosen per request, independently of the anthropic-version header."
+          },
+          "max_tokens": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Hard ceiling on tokens generated. Counts thinking as well as visible output on models that think."
+          },
+          "messages": {
+            "type": "array",
+            "description": "The conversation so far, alternating user and assistant turns.",
+            "items": { "$ref": "#/components/schemas/InputMessage" }
+          },
+          "system": {
+            "type": "string",
+            "description": "System prompt. A separate top-level field, not a message with role system."
+          },
+          "tools": {
+            "type": "array",
+            "description": "Tool definitions the model may call.",
+            "items": { "type": "object", "additionalProperties": true }
+          },
+          "stream": {
+            "type": "boolean",
+            "description": "Command uses the non-streaming form on this path and unwraps the complete reply."
+          }
+        },
+        "additionalProperties": true
+      },
+      "InputMessage": {
+        "type": "object",
+        "required": ["role", "content"],
+        "properties": {
+          "role": { "type": "string", "enum": ["user", "assistant"] },
+          "content": {
+            "description": "Plain text, or an array of content blocks for images, tool use and tool results.",
+            "anyOf": [
+              { "type": "string" },
+              { "type": "array", "items": { "type": "object", "additionalProperties": true } }
+            ]
+          }
+        },
+        "additionalProperties": true
+      },
+      "Message": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "type": { "type": "string" },
+          "role": { "type": "string" },
+          "model": { "type": "string" },
+          "content": {
+            "type": "array",
+            "description": "Reply blocks: text, thinking, and tool_use.",
+            "items": { "type": "object", "additionalProperties": true }
+          },
+          "stop_reason": {
+            "type": ["string", "null"],
+            "description": "end_turn, max_tokens, tool_use, refusal, or pause_turn."
+          },
+          "usage": {
+            "type": "object",
+            "description": "Token counts. These are the real cost facts for this call, as distinct from anything Coherence counts about the payload.",
+            "properties": {
+              "input_tokens": { "type": "integer" },
+              "output_tokens": { "type": "integer" },
+              "cache_read_input_tokens": { "type": "integer" },
+              "cache_creation_input_tokens": { "type": "integer" }
+            },
+            "additionalProperties": true
+          }
+        },
+        "additionalProperties": true
+      }
+    }
+  }
+}
