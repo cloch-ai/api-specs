@@ -19,7 +19,7 @@
   "paths": {
     "/v1/messages": {
       "post": {
-        "operationId": "create_message",
+        "operationId": "anthropic-messages-api_create_message",
         "summary": "Send a conversation to Claude and get a reply",
         "description": "Creates a model response for a conversation. Command calls this for every chat turn.\n\nThe caller supplies the conversation and the model id. The API key is injected by Coherence at egress and is never visible to the caller.",
         "tags": ["messages"],
