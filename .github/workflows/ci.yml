@@ -1,0 +1,88 @@
+# The specs in this repository are fetched OVER THE INTERNET by Coherence at
+# registration time (see the repository description, and coherence's
+# .claude/skills/api-registry). A malformed spec here does not fail here — it fails
+# in the consumer, at registration, for whoever is trying to connect something.
+#
+# That is why this gate exists and why it is cheap: parse every spec and assert the
+# handful of keys that make it an OpenAPI document at all.
+name: CI
+
+# 🔴 NO PATH FILTERS, DELIBERATELY.
+#
+# The obvious version of this workflow filters on `specs/**`. Do not. A required
+# check that is path-filtered NEVER REPORTS on a pull request that misses the
+# filter, and GitHub waits for it forever, so every docs-only PR is blocked by a
+# check that will not run. acss has exactly that shape today: two path-filtered
+# workflows, zero runs ever (SYN-2754 sibling finding, 29 Aug 2026).
+#
+# This suite is seconds long. Running it on everything costs nothing and cannot
+# deadlock.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  # Named `checks` for parity with command and vox-platform, whose required
+  # context is also `checks`. One name across the estate means one thing to
+  # require, and nobody has to look up which repo calls it what.
+  # ⚠️ NO `name:` ON THIS JOB, DELIBERATELY. GitHub uses a job's `name:` as the
+  # CHECK CONTEXT, so adding one here would make the required context
+  # "Specs are parseable OpenAPI documents" instead of `checks`, and the parity
+  # above would be a claim rather than a fact. Measured on the first run of this
+  # workflow, which reported exactly that and had to be corrected.
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # python3 is preinstalled on ubuntu-latest. No dependency to pin, nothing to
+      # fetch, so this cannot go red because a registry was slow.
+      #
+      # ⚠️ THIS IS NOT FULL OPENAPI VALIDATION and does not claim to be. It asserts
+      # the document parses and carries the keys a consumer dereferences before it
+      # can do anything useful. A real validator (spectral, openapi-spec-validator)
+      # is a strictly better check and a strictly bigger dependency; this is the
+      # floor, chosen so the repository has a gate today rather than a plan.
+      - name: Every spec parses and looks like OpenAPI
+        run: |
+          python3 - <<'PY'
+          import json, sys, pathlib
+
+          specs = sorted(pathlib.Path("specs").rglob("*.json"))
+          if not specs:
+              # An empty result here would otherwise pass silently, which is the
+              # failure mode this estate keeps meeting: a check that cannot fail.
+              print("FAIL: no specs found under specs/ — this gate would pass vacuously")
+              sys.exit(1)
+
+          failed = False
+          for p in specs:
+              try:
+                  doc = json.loads(p.read_text())
+              except Exception as e:
+                  print(f"FAIL {p}: does not parse as JSON: {e}")
+                  failed = True
+                  continue
+
+              missing = [k for k in ("openapi", "info", "paths") if k not in doc]
+              if missing:
+                  print(f"FAIL {p}: missing top-level key(s): {', '.join(missing)}")
+                  failed = True
+                  continue
+
+              version = str(doc["openapi"])
+              if not version.startswith("3."):
+                  print(f"FAIL {p}: openapi is {version!r}; Coherence registers 3.x")
+                  failed = True
+                  continue
+
+              title = doc["info"].get("title", "<no title>")
+              print(f"ok   {p}: OpenAPI {version} — {title} ({len(doc['paths'])} paths)")
+
+          print(f"\n{len(specs)} spec(s) checked")
+          sys.exit(1 if failed else 0)
+          PY
