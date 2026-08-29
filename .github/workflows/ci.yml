@@ -29,8 +29,12 @@ jobs:
   # Named `checks` for parity with command and vox-platform, whose required
   # context is also `checks`. One name across the estate means one thing to
   # require, and nobody has to look up which repo calls it what.
+  # ⚠️ NO `name:` ON THIS JOB, DELIBERATELY. GitHub uses a job's `name:` as the
+  # CHECK CONTEXT, so adding one here would make the required context
+  # "Specs are parseable OpenAPI documents" instead of `checks`, and the parity
+  # above would be a claim rather than a fact. Measured on the first run of this
+  # workflow, which reported exactly that and had to be corrected.
   checks:
-    name: Specs are parseable OpenAPI documents
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
